@@ -4,7 +4,7 @@ Este projeto é uma ferramenta automatizada desenvolvida para a identificação,
 
 O sistema não apenas detecta a instabilidade, mas coleta métricas profundas de execução (**Coverage, Profiling e Tracing**) para permitir uma comparação diferencial entre execuções que passaram (`PASSED`) e execuções que falharam (`FAILED`).
 
-## 🚀 Funcionalidades Principais
+##  Funcionalidades Principais
 
 O framework opera em três camadas de análise simultâneas:
 
@@ -23,7 +23,7 @@ O framework opera em três camadas de análise simultâneas:
 
 ---
 
-## 🛠️ Arquitetura do Sistema
+##  Arquitetura do Sistema
 
 O sistema foi desenhado para garantir **isolamento total** e **reprodutibilidade**.
 
@@ -54,7 +54,7 @@ Após as execuções (Runs), este módulo compara os artefatos gerados:
 
 ---
 
-## 📋 Pré-requisitos
+##  Pré-requisitos
 
 * **Python 3.8+**
 * **Git** instalado e configurado.
@@ -68,7 +68,7 @@ pip install -r requirements.txt
 
 ---
 
-## ⚙️ Como Utilizar
+##  Como Utilizar
 
 ### Passo 1: Preparar o Dataset
 O framework espera um arquivo CSV com os testes a serem analisados.
@@ -94,7 +94,7 @@ python3 main.py \
 
 ---
 
-## 📂 Estrutura dos Resultados
+##  Estrutura dos Resultados
 
 Após a execução, a pasta de saída terá a seguinte estrutura:
 
@@ -115,7 +115,7 @@ dataset_mestrado_full/
 
 ---
 
-## 🤝 Contribuição e Autoria
+##  Contribuição e Autoria
 
 Projeto desenvolvido no escopo de Mestrado para análise avançada de testes de software.
 Branch atual de desenvolvimento: `projetos-TTMestado`.
