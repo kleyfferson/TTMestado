@@ -22,7 +22,7 @@ def runMultipleTimes(modDir: str, modName: str, count: int, params: List[bool]):
     dirList = getTestDir(modDir)
 
     cwd = getcwd()
-    subprocess.run(["mkdir", f"Test-{modName}"])
+    subprocess.run(["mkdir","-p", f"Test-{modName}"])
 
     for dir in dirList:
         testFiles = getTestFiles(dir)
@@ -30,7 +30,7 @@ def runMultipleTimes(modDir: str, modName: str, count: int, params: List[bool]):
             chdir(cwd + "/" + f"Test-{modName}")
             currentFile = "file_" + path.basename(testFile)[:-3]
 
-            subprocess.run(["mkdir", currentFile])
+            subprocess.run(["mkdir","-p", currentFile])
             chdir(path.abspath(currentFile))
             if checkForTestClasses(testFile) is None:
                 tests = getTestCases([testFile])
@@ -41,12 +41,12 @@ def runMultipleTimes(modDir: str, modName: str, count: int, params: List[bool]):
 
                     if checkForTestParametrization(testFile, testCase):
                         for param in getTestParameters(testFile, testCase):
-                            subprocess.run(["mkdir", f"{testCase}-{param}"])
+                            subprocess.run(["mkdir","-p", f"{testCase}-{param}"])
                             runSummary = []
                             totalTime = 0
                             for run in range(count):
                                 chdir(getcwd() + "/" + testCase + "-" + param)
-                                subprocess.run(["mkdir", f"Run-{run}"])
+                                subprocess.run(["mkdir","-p", f"Run-{run}"])
                                 runDir = getcwd() + "/" + f"Run-{run}"
                                 chdir(runDir)
 
@@ -64,9 +64,9 @@ def runMultipleTimes(modDir: str, modName: str, count: int, params: List[bool]):
                             chdir(cwd + "/" + f"Test-{modName}/{currentFile}")
                     else:
                         for run in range(count):
-                            subprocess.run(["mkdir", testCase])
+                            subprocess.run(["mkdir","-p", testCase])
                             chdir(getcwd() + "/" + testCase)
-                            subprocess.run(["mkdir", f"Run-{run}"])
+                            subprocess.run(["mkdir","-p", f"Run-{run}"])
                             runDir = getcwd() + "/" + f"Run-{run}"
                             chdir(runDir)
                             runResult = runTest(testFile, testCase, params)
@@ -90,12 +90,12 @@ def runMultipleTimes(modDir: str, modName: str, count: int, params: List[bool]):
                     for test in tests:
                         if checkForTestParametrization(testFile, test):
                             for param in getTestParameters(testFile, test):
-                                subprocess.run(["mkdir", f"{className}::{test}-{param}"])
+                                subprocess.run(["mkdir","-p", f"{className}::{test}-{param}"])
                                 runSummary = list()
                                 totalTime = 0
                                 for run in range(count):
                                     chdir(getcwd() + f"/{className}::{test}-{param}")
-                                    subprocess.run(["mkdir", f"Run-{run}"])
+                                    subprocess.run(["mkdir","-p", f"Run-{run}"])
                                     runDir = getcwd() + f"/Run-{run}"
                                     chdir(runDir)
                                     runResult = runTest(testFile, test, params, className = className, isParametrized = True, parameters = param)
@@ -111,13 +111,13 @@ def runMultipleTimes(modDir: str, modName: str, count: int, params: List[bool]):
                                 chdir(cwd + "/" + f"Test-{modName}/{currentFile}")
 
                         else:
-                            subprocess.run(["mkdir", f"{className}::{test}"])
+                            subprocess.run(["mkdir","-p", f"{className}::{test}"])
                             runSummary = list()
                             totalTime = 0
 
                             for run in range(count):
                                 chdir(getcwd() + f"/{className}::{test}")
-                                subprocess.run(["mkdir", f"Run-{run}"])
+                                subprocess.run(["mkdir","-p", f"Run-{run}"])
                                 runDir = getcwd() + "/" + f"Run-{run}"
                                 chdir(runDir)
                                 runResult = runTest(testFile, test, params, className = className)

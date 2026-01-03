@@ -1,111 +1,151 @@
-from Analise import analise, utils, VirtualEnvironment
-from os import chdir, getcwd, path
+from Analise import utils
+from os import path
+import os as os
 from typing import List
-from time import sleep
 import argparse
 import csv
 import subprocess
+import shutil
+from pathlib import Path
+import re
+import sys
 
 def str_to_bool(value: str) -> bool:
-    if value.lower() in {"true", "t"}:
+    """Converte strings 'true', 't', '1' para True, e 'false', 'f', '0' para False."""
+    if isinstance(value, bool):
+        return value
+    if value.lower() in {"true", "t", "1"}:
         return True
-    elif value.lower() in {"false", "f"}:
+    elif value.lower() in {"false", "f", "0"}:
         return False
     else:
         raise argparse.ArgumentTypeError(f"Valor booleano invalido: {value}")
 
 def str_to_int(value: str) -> int:
+    """Converte string para inteiro positivo."""
     if value.isdigit() and int(value) > 0:
         return int(value)
     raise argparse.ArgumentTypeError(f"Valor inteiro invalido: {value}")
 
 def argsDefiner():
-    # Criando um objeto ArgumentParser
+    """Define, lê e processa os argumentos da linha de comando."""
     parser = argparse.ArgumentParser()
 
-    # Adicionando parâmetros command-line
-    parser.add_argument("--repo-dir", help = "Diretorio para o repositorio", type = str, default = "")
-    parser.add_argument("--repo-name", help = "Nome do repositorio", type = str, default = "")
-    parser.add_argument("--read-from-csv", help = "CSV com informações do repositório a ser lido", type = str, default = "")
-    parser.add_argument("--output-dir", help = "Especificar o diretorio para onde os resultados de teste serao armazenados", default =  ".")
-    parser.add_argument("--no-runs", help =  "Especificar a quantidade de rodadas que cada repositorio tera", type = str_to_int, default = 1)
-    parser.add_argument("--include-test-tracing", help = "Determinar se a ferramenta deve executar o tracing de cada teste. O default eh True", type = str_to_bool, default = True)
-    parser.add_argument("--include-test-coverage", help = "Determinar se a ferramenta deve executar o coverage de cada teste. O default eh False", type = str_to_bool, default = False)
-    parser.add_argument("--include-test-profiling", help = "Determinar se a ferramente deve realizar o profiling dos testes. O default eh False", type = str_to_bool, default = False)
-    parser.add_argument("--run-specific-test", help = "Rodar a ferramenta em testes específicos. Deve-se ser informados, em um csv, o nome do repositório, sua URL, seu GitHash, o node do teste e a quantidade de execuções.", type = str, default = "")
-    parser.add_argument("--venv-dir", help = "Virtual environment associado a reprodução dos resultados", type = str, default = True)
+    # --- Definição dos Argumentos ---
+    parser.add_argument("--repo-dir", help="Diretorio para o repositorio", type=str, default="")
+    parser.add_argument("--repo-name", help="Nome do repositorio", type=str, default="")
+    parser.add_argument("--read-from-csv", help="CSV com informações do repositório a ser lido", type=str, default="")
+    parser.add_argument("--output-dir", help="Especificar o diretorio para onde os resultados de teste serao armazenados", default=".")
+    parser.add_argument("--no-runs", help="Especificar a quantidade de rodadas que cada repositorio tera", type=str_to_int, default=1)
+    parser.add_argument("--include-test-tracing", help="Executar tracing de cada teste", type=str_to_bool, default=False)
+    parser.add_argument("--include-test-coverage", help="Executar coverage de cada teste", type=str_to_bool, default=False)
+    parser.add_argument("--include-test-profiling", help="Realizar o profiling dos testes", type=str_to_bool, default=False)
+    parser.add_argument("--run-specific-test", help="Rodar a ferramenta em testes específicos a partir de um CSV.", type=str, default="")
+    parser.add_argument("--venv-path", help="Caminho para o diretório do ambiente virtual a ser usado", type=str, default="")
 
-    # Adicionando os parametros
     args = parser.parse_args()
 
+    # --- Processamento dos Argumentos ---
     csvFile = args.read_from_csv
     tracing = args.include_test_tracing
     coverage = args.include_test_coverage
     profiling = args.include_test_profiling
     specificTests = args.run_specific_test
-    venvDir = args.venv_dir
+    venvPath = args.venv_path
 
-    if csvFile == "" and specificTests == "":
-        # Obtendo os parametros especificados
-        repo = args.repo_dir
-        name = args.repo_name
-        noruns = args.no_runs
-
-        analise.runMultipleTimes(repo, name, noruns, [tracing, coverage, profiling])
-    elif specificTests != "":
-        if venvDir == "":
-            raise ValueError("Nao foi informado um diretorio para o ambiente virtual")
+    # --- Lógica de Execução ---
+    if specificTests:
+        specificTests = path.abspath(specificTests)
+        
+        if not venvPath:
+            raise ValueError("O argumento --venv-path é obrigatório ao usar --run-specific-test")
+        
+        with open(specificTests, "r", encoding="utf8") as csv_file:
+            reader = list(csv.DictReader(csv_file, delimiter=","))
+        
+        if not reader:
+            print("CSV de testes está vazio.")
         else:
-            with open(specificTests, "r", encoding = "utf8") as csv_file:
+            row = reader[0]
+            try:
+                repo_name = row["Name"]
+                repo_hash = row["Hash"]
+                repo_url = row["URL"]
+                test_no_runs = int(float(row["No_Runs"]))
+                test_node = row["Test"]
 
-                reader = csv.DictReader(csv_file,  delimiter = ",")
-                for row in reader:
-                    # Instalando as dependências desse projeto
-                    process = subprocess.Popen(
-                        "pip3 install --force-reinstall -r requirements.txt", stdout = subprocess.PIPE, stderr = subprocess.PIPE, 
-                        shell = True, executable = "/bin/bash"
-                    )
-                    process.wait()
+                repo = utils.Repository(
+                    githash=repo_hash,
+                    url=repo_url,
+                    isgitrepo=True,
+                    noruns=str(test_no_runs)
+                )
+
+                utils.runSpecificTests(
+                    repo=repo, 
+                    mod_name=repo_name,
+                    params=[tracing, coverage, profiling],
+                    test_node=test_node,
+                    no_runs=test_no_runs,
+                    env_path=Path(venvPath)
+                )
+
+                print(f"\n--- Iniciando pós-processamento com diff_finder.py ---")
+                
+                sanitized_test_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', test_node.split("::")[-1])
+                test_directory = path.join(os.getcwd(), f"Test-{repo_name}", sanitized_test_name)
+
+                analise_tipo = ""
+                coluna_chave = ""
+
+                if profiling:
+                    analise_tipo = "profiling"
+                    coluna_chave = "filename:lineno(function)"
+                elif tracing:
+                    analise_tipo = "tracing"
+                    coluna_chave = "Function"
+                elif coverage:
+                    analise_tipo = "coverage"
+                    coluna_chave = "Percentual de Cobertura (%)"
+                
+                if analise_tipo:
+                    python_executable = Path(venvPath) / "bin" / "python"
+                    diff_finder_script = Path(os.getcwd()) / "diff_finder.py"
+
+                    command = [
+                        str(python_executable),
+                        str(diff_finder_script),
+                        test_directory,
+                        analise_tipo,
+                        str(test_no_runs),
+                        coluna_chave
+                    ]
                     
-                    repo_name = row["Name"]
-                    repo_hash = row["Hash"]
-                    repo_url = row["URL"]
-                    test_no_runs = int(float(row["No_Runs"]))
-                    test_node = row["Test"]
+                    print(f"Executando comando: {' '.join(command)}")
+                    try:
+                        subprocess.run(command, check=True, text=True)
+                        print("--- diff_finder.py executado com sucesso. ---")
+                    except subprocess.CalledProcessError as e:
+                        print("!!!!!! ERRO ao executar o diff_finder.py !!!!!!")
+                        print(f"Comando: {' '.join(e.cmd)}")
+                        print(f"Código de Saída: {e.returncode}")
+                        print(f"Saída (stdout):\n{e.stdout}")
+                        print(f"Erro (stderr):\n{e.stderr}\n")
+                        raise 
 
-                    repo = utils.Repository(githash = repo_hash, url = repo_url, isgitrepo = True, noruns = str(test_no_runs))
-
-                    utils.runSpecificTests(repo, repo_name, [tracing, coverage, profiling], test_node, test_no_runs, env_path = venvDir)
-                    sleep(10)
-
-    elif csvFile != "" and specificTests == "":
-        repos: List[utils.Repository] = utils.readCSV(csvFile)
-        for repo in repos:
-            utils.cloning(repo)
-            utils.venving(repo)
-            utils.activating(repo)
-            analise.runMultipleTimes(repo.name, repo.name, int(repo.noruns), [tracing, coverage, profiling])
-
-def test_trace() -> None:
-    files = analise.getTestFiles("analytic_shrinkage/nonlinshrink/test")
-    tests = analise.getTestCases(files)
-    cwd = getcwd()
-    for file in files:
-        for test in tests[file]:
-            analise.traceFuncs("analytic_shrinkage/nonlinshrink/test/test_analytic_shrinkage.py", test, "analytic_shrinkage")
-            analise.refineCovers("analytic_shrinkage", files)
-            analise.getTestCoverage("analytic_shrinkage", test)
-            chdir(cwd)
-
-def test_settrace() -> None:
-    dirs = analise.getTestDir(getcwd() + "/" + "analytic_shrinkage")
-    
-    for dir in dirs:
-        analise.createTestFileCopy(dir)
-        analise.implementTracer(dir)
-
-def test_profiler() -> None:
-    analise.profiling("analytic_shrinkage")
+            except Exception as e:
+                print(f"Erro ao executar o teste ou pós-processamento: {e}")
+                raise
+            finally:
+                with open(specificTests, mode="w", newline="", encoding='utf-8') as csv_file:
+                    if reader:
+                        fieldnames = reader[0].keys()
+                        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+                        writer.writeheader()
+                        if len(reader) > 1:
+                            writer.writerows(reader[1:])
+    else:
+        print("Nenhum fluxo de teste específico foi solicitado.")
 
 if __name__ == "__main__":
     argsDefiner()

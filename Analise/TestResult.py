@@ -1,189 +1,120 @@
-""" Pluggin principal para rastreio da execução do Pytest
+"""
+Plugin "All-in-One": Tracing + Profiling + Coverage + Hash de Segurança
 """
 from typing import List, Tuple, Optional, Any
-from .VirtualEnvironment import VirtualEnvironment
-from .analise import *
-from .utils import activateVenv
-from sys import settrace
-from time import time
-from inspect import getmembers
+from pathlib import Path
 import pytest
-import sys
 import cProfile
-import trace as trc
-import pstats
+import sys
+import os
+import hashlib
+import time
 import gzip
+import inspect
 
 class TestResult:
-    def __init__(self, trace: bool = True, prof: bool = False, cov: bool = False, 
-                 outputDir: str = ".", testName: str = "", modName: str = "", testFileName: str = "",
-                 isParametrized: Optional[bool] = False, params: Optional[List[Any]] = [], 
-                 repoVenv: VirtualEnvironment = None):
+    def __init__(self, trace: bool = False, prof: bool = False, cov: bool = False, 
+                 outputDir: str = ".", testName: str = "",
+                 automation_root: Path = None, project_root_dir: str = ""):
+        
+        self.outputDir = outputDir
+        self.prof = prof
+        self.trace = trace
+        self.cov = cov
         self.testName = testName
-        self.modName = modName
-        self.testFileName = testFileName
-
-        self.reports = []
+        
+        # Buffer para Tracing
+        self.traceBuffer = []
+        self.trace_depth = 0
+        
+        # Contadores
         self.passed = 0
         self.failed = 0
         self.xfailed = 0
         self.skipped = 0
-        self.total_duration = 0
+        self.total_duration = 0.0
+        
+        self.profiler = None
+        self.start_time = 0
 
-        self.traceBuffer = []
-        self.callCounter = [1]
-        self.rootFile = [""]
-        self.rootFileNo = [""]
-        self.rootFuncName = [""]
+    def trace_calls(self, frame, event, arg):
+        """ Callback para sys.settrace """
+        if event != 'call' and event != 'return':
+            return self.trace_calls
 
-        self.outputDir = outputDir
-        self.cov = cov
-        self.trace = trace
-        self.prof = prof
+        co = frame.f_code
+        func_name = co.co_name
+        filename = co.co_filename
+        
+        # Filtra ruído interno
+        if "site-packages" in filename or "<string>" in filename:
+            return self.trace_calls
 
-        self.repoVenv = repoVenv
+        indent = "  " * self.trace_depth
+        
+        if event == 'call':
+            self.traceBuffer.append(f"{indent}> {func_name} in {filename}\n")
+            self.trace_depth += 1
+        elif event == 'return':
+            self.trace_depth = max(0, self.trace_depth - 1)
+            self.traceBuffer.append(f"{indent}< {func_name} returned\n")
+            
+        return self.trace_calls
 
+    @pytest.hookimpl(hookwrapper=True)
+    def pytest_runtest_protocol(self, item, nextitem):
+        # --- INÍCIO ---
         if self.prof:
             self.profiler = cProfile.Profile()
-
-        if isParametrized:
-            self.params = getParamsValues(params)
-        else:
-            self.params = None
-    
-    def pytest_runtest_protocol(self, item, nextitem):
-        if self.cov:
-            testName = item.nodeid.split("::")[-1]
-            open(f"{testName}-cov.txt", "a").close()
-            with open(f"{testName}-cov.txt", "w") as traceFile:
-
-                if self.params is not None:
-                    if len(self.params) != len(item.fixturenames):
-                        raise Exception(f"Number of test arguments is different from the number of the given arguments: expected {len(item.funcargs)} got {len(self.params)}")
-                    else:
-                        item.funcargs = {item.fixturenames[i]: self.params[i] for i in range(len(item.fixturenames))}
-                        locals_ = {**locals(), **item.funcargs}
-                else:
-                    locals_ = {**locals()}
-
-                sys.stdout = traceFile
-                try:
-                    tracer = trc.Trace(trace=1, count=1)
-                    tracer.runctx("item.runtest()", globals=globals(), locals=locals_)
-                finally:
-                    sys.stdout = sys.__stdout__
-
-    @pytest.hookimpl(hookwrapper = True)
-    def pytest_runtest_makereport(self, item, call):
-        outcome = yield
-        report = outcome.get_result()
-        if report.when == 'call':
-            self.reports.append(report)
-
-    def pytest_collection_modifyitems(self, items):
-        self.collected = len(items)
-
-    def pytest_terminal_summary(self, terminalreporter, exitstatus):
-        self.passed = len(terminalreporter.stats.get('passed', []))
-        self.failed = len(terminalreporter.stats.get('failed', []))
-        self.xfailed = len(terminalreporter.stats.get('xfailed', []))
-        self.skipped = len(terminalreporter.stats.get('skipped', []))
-        self.total_duration = time() - terminalreporter._sessionstarttime
-
-    @pytest.hookimpl(tryfirst = True)
-    def pytest_sessionstart(self, session):    
-        activateVenv(self.repoVenv._venv_dir)
-        if self.prof:
             self.profiler.enable()
-
-        if self.trace:
-            traceCalls = self.createTraceCalls()
-            settrace(traceCalls)
-
-    @pytest.hookimpl(tryfirst = True)
-    def pytest_sessionfinish(self, session, exitstatus):
-        if self.trace:
-            self.end(self.outputDir)
-
-        if self.prof:
-            self.profiler.disable()
-            stats = pstats.Stats(self.profiler)
-            filteredStats = pstats.Stats()
-
-            for entry in stats.stats.items():
-                if not self.ignoreEntry(entry):
-                    filteredStats.stats[entry[0]] = entry[1]
-
-            with open("stats.txt", "w") as f:
-                filteredStats.stream = f
-                filteredStats.sort_stats("ncalls").print_stats()
-            f.close()
-    
-    def ignoreEntry(self, entry: Tuple[Tuple[str, str, str], Tuple]):
-        ignore = {"pytest", "pluggy", "builtins"}
-        fileName = entry[0][0]
-
-        return any(ignoredDir in fileName for ignoredDir in ignore)
-    
-    def createTraceCalls(self) -> callable:
-        """Faz o trace de chamadas para funções de uma função
-        """
-        def traceCalls(frame, event, arg):
-            if event not in ['call', 'return'] or frame == None:
-                return
             
-            line = str(frame.f_lineno)
-            code = frame.f_code
-            funcName = code.co_name
-            fileName = code.co_filename
+        if self.trace:
+            self.traceBuffer = []
+            sys.settrace(self.trace_calls)
+        
+        self.start_time = time.time()
+        
+        yield # Executa o teste
+        
+        # --- FIM ---
+        duration = time.time() - self.start_time
+        self.total_duration += duration
+        
+        if self.trace:
+            sys.settrace(None)
+            self._save_tracing(item)
 
-            if self.callCounter[0] == 1:
-                self.rootFile[0] = fileName
-                self.rootFileNo[0] = line
-                self.rootFuncName[0] = funcName
+        if self.prof and self.profiler:
+            self.profiler.disable()
+            self._save_profile(item)
 
-            # Ignora chamadas do pytest
-            if self.rootFuncName[0] not in self.testName:
-                return
+    def _get_safe_filename(self, item, suffix):
+        if not os.path.exists(self.outputDir):
+            os.makedirs(self.outputDir, exist_ok=True)
+            
+        safe_name = item.nodeid.replace("/", "_").replace("::", "_").replace(".py", "")
+        if len(safe_name) > 140:
+            hash_digest = hashlib.md5(safe_name.encode('utf-8')).hexdigest()[:10]
+            safe_name = safe_name[:100] + "_HASH_" + hash_digest
+        return os.path.join(self.outputDir, f"{safe_name}.{suffix}")
 
-            if event == 'call':
-                self.traceBuffer.append(self.callCounter[0] * ">" + f"{funcName}: {fileName} ({self.rootFile[0]}, {self.rootFileNo[0]}, {self.rootFuncName[0]})\n")
-                self.callCounter[0] += 1
-            if event == 'return':
-                self.callCounter[0] -= 1
-                if arg is not None:
-                    builtins = (int, float, str, complex, list, tuple, range, dict, set, frozenset, bool, bytes, bytearray)
-                    if isinstance(arg, object) and type(arg) not in builtins:
-                        try:
-                            attrs = getmembers(arg)
-                        except Exception as e:
-                            attrs = []
-                        returnObj = f"{type(arg)}:\n"
-                        for name, value in attrs:
-                            # Ignora builtins
-                            try:
-                                if not name.startswith("__") and not name.endswith("__"):
-                                    returnObj += self.callCounter[0] * "\t" + f"{name}: {value}\n"
-                            except AttributeError:
-                                returnObj += f"Erro ao acessar atributo {name}"
-                        self.traceBuffer.append(self.callCounter[0] * "<" + f"{funcName}: {returnObj} ({self.rootFile[0]}, {self.rootFileNo[0]}, {self.rootFuncName[0]})\n")
-                    else:
-                        self.traceBuffer.append(self.callCounter[0] * "<" + f"{funcName}: {arg} ({self.rootFile[0]}, {self.rootFileNo[0]}, {self.rootFuncName[0]})\n")
-                else:
-                    self.traceBuffer.append(self.callCounter[0] * "<" + f"{funcName}: None ({self.rootFile[0]}, {self.rootFileNo[0]}, {self.rootFuncName[0]})\n")
+    def _save_profile(self, item):
+        filename = self._get_safe_filename(item, "prof")
+        try:
+            self.profiler.dump_stats(filename)
+        except Exception as e:
+            print(f"Erro salvando profile: {e}")
 
-            return traceCalls
+    def _save_tracing(self, item):
+        filename = self._get_safe_filename(item, "trace.gz")
+        try:
+            with gzip.open(filename, "wt", encoding="utf-8") as f:
+                f.writelines(self.traceBuffer)
+        except Exception as e:
+            print(f"Erro salvando tracing: {e}")
 
-        settrace(traceCalls)
-        return traceCalls
-
-    def end(self, outDir: str):
-        settrace(None)
-        self.writeTrace(outDir)
-
-    def writeTrace(self, outDir: str) -> None:
-        if len(self.traceBuffer) > 0:
-            with gzip.open(outDir + "/calls.gz", "wb") as f:
-                for line in self.traceBuffer:
-                    f.write(line.encode())
-            f.close()
+    def pytest_runtest_logreport(self, report):
+        if report.when == 'call':
+            if report.passed: self.passed += 1
+            elif report.failed: self.failed += 1
+            elif report.skipped: self.skipped += 1
